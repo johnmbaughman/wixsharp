@@ -9,7 +9,7 @@
         /// <summary>
         /// Specifies when the service action occur. It can be one of the <see cref="SvcEventType"/> values.
         /// </summary>
-        protected internal SvcEventType Type;
+        public SvcEventType Type;
 
         /// <summary>
         /// Predefined instance of <see cref="SvcEvent"/> with <c>Type</c> set to <see cref="SvcEventType.install"/>
@@ -92,7 +92,10 @@
         [Xml]
         public SvcEventType? Stop;
 
-        private SvcEvent()
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SvcEvent"/> class.
+        /// </summary>
+        public SvcEvent()
         {
         }
 

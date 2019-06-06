@@ -65,18 +65,20 @@ namespace WixSharp
     /// </example>
     public class Project : WixProject
     {
-        internal string ComponentId(string seed)
+        internal new string ComponentId(string seed)
         {
             // Component id must be globally unique. Otherwise other products can
             // accidentally trigger MSI ref-counting by installing more than one product
             // with the same component id.
+            //
             // The problem is caused by the mind bending MSi concept that a identity does
             // not logically belong to the product but to the target system. Thus if two
             // different products happens too have the component with the same id MSI will
             // treat the components as the same component.
             // Using GUID seems to be a good technique to overcome this limitation but the
-            // the wast majority of the samples (e.g. WiX) use human readable ids, which are
+            // the vast majority of the samples (e.g. WiX) use human readable ids, which are
             // of course not unique.
+            //
             // The excellent reading on the topic can be found here:
             // http://geekswithblogs.net/akraus1/archive/2011/06/17/145898.aspx
             // Ideally we would want to keep readability and uniqueness. Thus the solution
@@ -265,6 +267,16 @@ namespace WixSharp
         /// </example>
         /// </summary>
         public List<Media> Media = new List<Media>(new[] { new Media() });
+
+        /// <summary>
+        /// The REINSTALLMODE property is a string that contains letters specifying the type of reinstall to perform.
+        /// Options are case-insensitive and order-independent. This property should normally always be used in
+        /// conjunction with the REINSTALL property.
+        /// <para>Note, REINSTALLMODE property will be created only in the automatically produced WiX definition file
+        /// only if <see cref="WixSharp.Project.MajorUpgrade"/> is set.</para>
+        /// <para>Read more: https://docs.microsoft.com/en-us/windows/desktop/msi/reinstallmode </para>
+        /// </summary>
+        public string ReinstallMode = "amus";
 
         /// <summary>
         /// Relative path to RTF file with the custom licence agreement to be displayed in the Licence dialog.
@@ -702,13 +714,18 @@ namespace WixSharp
 
             if (ignoreEmptyDirectories)
             {
-                var emptyDirs = AllDirs.Where(d => !d.Files.Any() && !d.Dirs.Any());
+                IEnumerable<Dir> getEmptyDirs() => AllDirs.Where(d => !d.Files.Any() && !d.Dirs.Any());
 
-                emptyDirs.ForEach(emptyDir => AllDirs.ForEach(d =>
-                                              {
-                                                  if (d.Dirs.Contains(emptyDir))
-                                                      d.Dirs = d.Dirs.Where(x => x != emptyDir).ToArray();
-                                              }));
+                IEnumerable<Dir> emptyDirs;
+
+                while ((emptyDirs = getEmptyDirs()).Any())
+                {
+                    emptyDirs.ForEach(emptyDir => AllDirs.ForEach(d =>
+                                                  {
+                                                      if (d.Dirs.Contains(emptyDir))
+                                                          d.Dirs = d.Dirs.Where(x => x != emptyDir).ToArray();
+                                                  }));
+                }
             }
 
             return this;

@@ -2,14 +2,16 @@
 using WixSharp;
 using WixSharpSetup.Dialogs;
 
+// DON'T FORGET to update NuGet package "WixSharp".
+// NuGet console: Update-Package WixSharp
+// NuGet Manager UI: updates tab
+
 namespace $safeprojectname$
 {
     class Program
     {
         static void Main()
         {
-            DON'T FORGET to add NuGet package "WixSharp".
-            
             var project = new ManagedProject("MyProduct",
                              new Dir(@"%ProgramFiles%\My Company\My Product",
                                  new File("Program.cs")));

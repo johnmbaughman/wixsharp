@@ -2,24 +2,24 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
-using System.Linq;
-using System.Security.Principal;
-using System.Text;
-using System.Xml.Linq;
-using Microsoft.Deployment.WindowsInstaller;
-using Microsoft.Win32;
-using IO = System.IO;
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Principal;
+using System.Text;
 using System.Text.RegularExpressions;
-using static WixSharp.SetupEventArgs;
-using WixSharp.CommonTasks;
-using Microsoft.Tools.WindowsInstallerXml.Bootstrapper;
 using System.Windows.Forms;
-using System.Diagnostics;
+using System.Xml.Linq;
+using Microsoft.Deployment.WindowsInstaller;
+using Microsoft.Tools.WindowsInstallerXml.Bootstrapper;
+using Microsoft.Win32;
+using WixSharp.CommonTasks;
+using static WixSharp.SetupEventArgs;
+using IO = System.IO;
 
 namespace WixSharp
 {
@@ -328,6 +328,29 @@ namespace WixSharp
             return obj;
         }
 
+        public static XElement SetAttribute(this XElement obj, XName name, object value)
+        {
+            if (value is string && (value as string).IsEmpty())
+            {
+                obj.SetAttributeValue(name, null);
+            }
+            else if (value is bool?)
+            {
+                var attrValue = (bool?)value;
+                obj.SetAttributeValue(name, attrValue.ToNullOrYesNo());
+            }
+            else if (value is bool)
+            {
+                var attrValue = (bool)value;
+                obj.SetAttributeValue(name, attrValue.ToYesNo());
+            }
+            else
+            {
+                obj.SetAttributeValue(name, value);
+            }
+            return obj;
+        }
+
         /// <summary>
         /// Sets the value of the attribute. This is a fluent version of XElement.SetAttributeValue.
         /// <para>Note <c>name</c> can include xml namespace prefix:
@@ -349,31 +372,11 @@ namespace WixSharp
                 var tokens = name.Substring(1).Split(new[] { '}' }, 2);
                 var xml_namespace = tokens.First();
                 var prefix = obj.GetNamespaceOfPrefix(xml_namespace);
-                if (prefix == null)
-                    throw new Exception($"Cannot find XML namespace prefix '{xml_namespace}'");
-
-                x_name = obj.GetNamespaceOfPrefix(xml_namespace) + tokens.Last();
+                if (prefix != null)
+                    x_name = obj.GetNamespaceOfPrefix(xml_namespace) + tokens.Last();
             }
 
-            if (value is string && (value as string).IsEmpty())
-            {
-                obj.SetAttributeValue(x_name, null);
-            }
-            else if (value is bool?)
-            {
-                var attrValue = (bool?)value;
-                obj.SetAttributeValue(x_name, attrValue.ToNullOrYesNo());
-            }
-            else if (value is bool)
-            {
-                var attrValue = (bool)value;
-                obj.SetAttributeValue(x_name, attrValue.ToYesNo());
-            }
-            else
-            {
-                obj.SetAttributeValue(x_name, value);
-            }
-            return obj;
+            return SetAttribute(obj, x_name, value);
         }
 
         /// <summary>
@@ -850,7 +853,7 @@ namespace WixSharp
             return (IntPtr)result;
         }
 
-        static char[] xmlDelimiters = "<>".ToCharArray();
+        static char[] xmlDelimiters = "<>&".ToCharArray();
 
         /// <summary>
         /// Returns the string data as a <see cref="T:System.Xml.Linq.XCData"/> if the value contains
@@ -1211,6 +1214,72 @@ namespace WixSharp
                 path = path.Replace(key, Compiler.EnvironmentConstantsMapping[key])
                            .Replace("[" + Compiler.EnvironmentConstantsMapping[key] + "]", Compiler.EnvironmentConstantsMapping[key]);
             return path;
+        }
+
+        /// <summary>
+        /// Normalizes the wix environment constants and custom properties.
+        /// <para>This method is not the same as `ExpandWixEnvConsts`. The key difference is
+        /// that it handles custom properties, leaves square brackets unchanged and also normalizes directory separators.
+        /// Normalization is critical for string values that are used as `ExeFileShortcut.Target`:</para>
+        /// <para>
+        /// <example>
+        /// <code>
+        /// @"%INSTALL_DIR%\my_app.exe".NormalizeWixString() -> "[INSTALL_DIR]my_app.exe"
+        /// @"%INSTALL_DIR%my_app.exe".NormalizeWixString()  -> "[INSTALL_DIR]my_app.exe"
+        /// @"[INSTALL_DIR]my_app.exe".NormalizeWixString()  -> "[INSTALL_DIR]my_app.exe"
+        /// </code>
+        /// </example>
+        /// </para>
+        /// </summary>
+        /// <param name="path">The path.</param>
+        /// <returns></returns>
+        public static string NormalizeWixString(this string path)
+        {
+            // EnvironmentConstantsMapping.Keys include '%' chars:
+            //   { "%ProgramFiles%", "ProgramFilesFolder" },
+            foreach (string key in Compiler.EnvironmentConstantsMapping.Keys)
+                path = path
+                           // if the constant came to this method already extended/normalized then the
+                           // call `.Replace(key.Trim('%'), Compiler.EnvironmentConstantsMapping[key]` would
+                           // insert suffix `Folder` one extra time (e.g. SystemFolder64Folder->SystemFolder64FolderFolder)
+
+                           // Another problem is that *64Folder/*FilesFolder can be ruined by * replacement
+                           // ProgramFiles64Folder/ProgramFilesFolder <- ProgramFiles
+                           // System64Folder, SystemFolder <- System
+
+                           // The solution is not elegant in terms of performance but adequate. We don't need
+                           // performance during the compilation.
+
+                           // protect `System` and `ProgramFiles`
+                           .Replace("System64Folder", "Sys64Folder")
+                           .Replace("SystemFolder", "SysFolder")
+                           .Replace("ProgramFiles64Folder", "ProgFiles64Folder")
+                           .Replace("ProgramFilesFolder", "ProgFilesFolder")
+
+                           .Replace(key.Trim('%'), Compiler.EnvironmentConstantsMapping[key])
+
+                           // restore `System` and `ProgramFiles`
+                           .Replace("Sys64Folder", "System64Folder")
+                           .Replace("SysFolder", "SystemFolder")
+                           .Replace("ProgFiles64Folder", "ProgramFiles64Folder")
+                           .Replace("ProgFilesFolder", "ProgramFilesFolder");
+
+            // ensure `%System64Folder%msiexec.exe` and `%System64Folder%\msiexec.exe` are converted in
+            // `[System64Folder]msiexec.exe`
+            var chars = path.Replace(@"%\", "%")
+                            .ToArray();
+
+            // Handle `%MY_CUSTOM_PROPERTY%MyApp.exe`
+            bool leftToken = true;
+            for (int i = 0; i < chars.Length; i++)
+                if (chars[i] == '%')
+                {
+                    chars[i] = leftToken ? '[' : ']';
+                    leftToken = !leftToken;
+                }
+            var result = new string(chars);
+
+            return result;
         }
 
         /// <summary>
@@ -2341,6 +2410,65 @@ namespace WixSharp
         }
 
         /// <summary>
+        /// Determines whether the specified session is cancelled.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <returns>
+        ///   <c>true</c> if the specified session is cancelled; otherwise, <c>false</c>.
+        /// </returns>
+        public static bool IsCancelled(this Session session)
+        {
+            try
+            {
+                session.Message(Microsoft.Deployment.WindowsInstaller.InstallMessage.ActionData, new Record());
+            }
+            catch (InstallCanceledException)
+            {
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether the specified session is cancelled.
+        /// <para>It is identical to <see cref="WixSharp.Extensions.IsCancelled(Session)"/> except
+        /// it does not throw/handle internal exception This helps if it is preferred to keep MSI log clean from any
+        /// messages triggered by handled exceptions.</para>
+        /// <para>Though this method relies on <see cref="Microsoft.Deployment.WindowsInstaller"/> internal (non-public)
+        /// implementation thus is not warranteed to stay unchanged in the future WiX releases.</para>
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <returns>
+        ///   <c>true</c> if the specified session is cancelled; otherwise, <c>false</c>.
+        /// </returns>
+        public static bool IsCancelledRaw(this Session session)
+        {
+            // does not throw but will become broken if WiX team changes the implementation
+            long ActionData = 0x09000000;
+            var RemotableNativeMethods = typeof(Session).Assembly
+                                                .GetTypes()
+                                                .FirstOrDefault(x => x.Name == "RemotableNativeMethods");
+
+            var MsiProcessMessage = RemotableNativeMethods.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+                                                          .FirstOrDefault(x => x.Name == "MsiProcessMessage");
+
+            var ret = (int)MsiProcessMessage.Invoke(null, new object[]
+                                                    {
+                                                        (int)session.Handle,
+                                                        (uint)ActionData,
+                                                        (int)new Record().Handle
+                                                    });
+
+            return (ret == (int)MessageResult.Cancel);
+        }
+
+        //============================
+
+        /// <summary>
         /// Queries MSI database directly for the table 'Property' value. This method is particularly useful for the stages when WiX session
         /// object is not fully initialized. For example properties are not discovered yet during EmbeddedUI loading event.
         /// </summary>
@@ -2724,14 +2852,47 @@ namespace WixSharp
         /// <see cref="WixSharp.XmlAttribute"/> and <see cref="WixSharp.WixObject.Attributes"/>.
         /// </summary>
         /// <param name="obj"></param>
+        /// <returns></returns>
+        internal static XElement ToXElement(this WixObject obj)
+        {
+            var root = new XElement(obj.GetType().Name);
+
+            root.AddAttributes(obj.Attributes).Add(obj.MapToXmlAttributes());
+            root.Add(obj.MapToXmlCData());
+
+            return root;
+        }
+
+        /// <summary>
+        /// Serializes the <see cref="WixSharp.WixObject"/> into XML based on the members marked with
+        /// <see cref="WixSharp.XmlAttribute"/> and <see cref="WixSharp.WixObject.Attributes"/>.
+        /// </summary>
+        /// <param name="obj"></param>
         /// <param name="elementName"></param>
         /// <returns></returns>
         public static XElement ToXElement(this WixObject obj, XName elementName)
         {
             var root = new XElement(elementName);
 
-            root.AddAttributes(obj.Attributes)
-                .Add(obj.MapToXmlAttributes());
+            root.AddAttributes(obj.Attributes).Add(obj.MapToXmlAttributes());
+            root.Add(obj.MapToXmlCData());
+
+            return root;
+        }
+
+        /// <summary>
+        /// Serializes the <see cref="WixSharp.WixObject"/> into XML based on the members marked with
+        /// <see cref="WixSharp.XmlAttribute"/> and <see cref="WixSharp.WixObject.Attributes"/>.
+        /// </summary>
+        /// <param name="obj">The obj.</param>
+        /// <param name="extension">The extension.</param>
+        /// <returns></returns>
+        public static XElement ToXElement(this WixObject obj, WixExtension extension)
+        {
+            var root = new XElement(extension.ToXName(obj.GetType().Name));
+
+            root.AddAttributes(obj.Attributes).Add(obj.MapToXmlAttributes());
+            root.Add(obj.MapToXmlCData());
 
             return root;
         }
@@ -2748,8 +2909,8 @@ namespace WixSharp
         {
             var root = new XElement(extension.ToXName(elementName));
 
-            root.AddAttributes(obj.Attributes)
-                .Add(obj.MapToXmlAttributes());
+            root.AddAttributes(obj.Attributes).Add(obj.MapToXmlAttributes());
+            root.Add(obj.MapToXmlCData());
 
             return root;
         }
@@ -2766,41 +2927,48 @@ namespace WixSharp
 
             var result = new List<XAttribute>();
 
-            // BindingFlags.NonPublic is needed to cover "internal" but not necessarily "private"
-            var fields = obj.GetType()
-                            .GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                            .Cast<MemberInfo>()
-                            .ToArray();
+            var items = getMemberInfo(obj)
+                                      .Select(x =>
+                                      {
+                                          var xmlAttr = (XmlAttribute)x.GetCustomAttributes(typeof(XmlAttribute), false)
+                                                                       .FirstOrDefault();
 
-            var props = obj.GetType()
-                           .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                           .Where(x => x.CanRead)
-                           .Cast<MemberInfo>()
-                           .ToArray();
+                                          string @namespace = null;
+                                          if (xmlAttr != null)
+                                              @namespace = xmlAttr.Namespace;
 
-            var items = props.Concat(fields)
-                             .Select(x =>
-                             {
-                                 var xmlAttr = (XmlAttribute)x.GetCustomAttributes(typeof(XmlAttribute), false)
-                                                               .FirstOrDefault();
-                                 string name = null;
-                                 if (xmlAttr != null)
-                                     name = xmlAttr.Name ?? x.Name;
+                                          bool IsCData = false;
+                                          string name = null;
+                                          if (xmlAttr != null)
+                                          {
+                                              name = xmlAttr.Name ?? x.Name;
+                                              IsCData = xmlAttr.IsCData;
+                                          }
 
-                                 object value = null;
-                                 if (x is FieldInfo)
-                                     value = (x as FieldInfo).GetValue(obj);
-                                 else if (x is PropertyInfo)
-                                     value = (x as PropertyInfo).GetValue(obj, emptyArgs);
+                                          object value = null;
+                                          if (!IsCData)
+                                          {
+                                              switch (x)
+                                              {
+                                                  case FieldInfo fieldInfo:
+                                                      value = fieldInfo.GetValue(obj);
+                                                      break;
 
-                                 return new
-                                 {
-                                     Name = name,
-                                     Value = value
-                                 };
-                             })
-                            .Where(x => x.Name != null && x.Value != null)
-                            .ToArray();
+                                                  case PropertyInfo propertyInfo:
+                                                      value = propertyInfo.GetValue(obj, emptyArgs);
+                                                      break;
+                                              }
+                                          }
+
+                                          return new
+                                          {
+                                              Name = name,
+                                              Value = value,
+                                              Namespace = @namespace
+                                          };
+                                      })
+                                      .Where(x => x.Name != null && x.Value != null)
+                                      .ToArray();
 
             foreach (var item in items)
             {
@@ -2819,10 +2987,75 @@ namespace WixSharp
                     xmlValue = ((bool)item.Value).ToYesNo();
                 }
 
-                result.Add(new XAttribute(item.Name, xmlValue));
+                XNamespace ns = item.Namespace ?? "";
+                result.Add(new XAttribute(ns + item.Name, xmlValue));
             }
 
             return result.ToArray();
+        }
+
+        private static XCData MapToXmlCData(this object obj)
+        {
+            var emptyArgs = new object[0];
+
+            XCData result = null;
+
+            var items = getMemberInfo(obj)
+                .Select(x =>
+                {
+                    var xmlAttr = (XmlAttribute)x.GetCustomAttributes(typeof(XmlAttribute), false).FirstOrDefault();
+
+                    bool IsCData = false;
+                    if (xmlAttr != null)
+                        IsCData = xmlAttr.IsCData;
+
+                    object value = null;
+
+                    if (IsCData)
+                    {
+                        switch (x)
+                        {
+                            case FieldInfo fieldInfo:
+                                value = fieldInfo.GetValue(obj);
+                                break;
+
+                            case PropertyInfo propertyInfo:
+                                value = propertyInfo.GetValue(obj, emptyArgs);
+                                break;
+                        }
+                    }
+
+                    return new
+                    {
+                        Value = value
+                    };
+                }).Where(x => x.Value != null);
+
+            foreach (var item in items)
+            {
+                string xmlValue = item.Value.ToString();
+
+                result = new XCData(xmlValue);
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<MemberInfo> getMemberInfo(object obj)
+        {
+            // BindingFlags.NonPublic is needed to cover "internal" but not necessarily "private"
+            var fields = obj.GetType()
+                .GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Cast<MemberInfo>()
+                .ToArray();
+
+            var props = obj.GetType()
+                .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Where(x => x.CanRead)
+                .Cast<MemberInfo>()
+                .ToArray();
+
+            return props.Concat(fields);
         }
 
         /// <summary>
@@ -2870,11 +3103,55 @@ namespace WixSharp
     public class XmlAttribute : Attribute
     {
         /// <summary>
+        /// Initializes a new instance of the <see cref="XmlAttribute"/> class.
+        /// </summary>
+        public XmlAttribute()
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="XmlAttribute"/> class.
+        /// </summary>
+        /// <param name="name">The name.</param>
+        public XmlAttribute(string name)
+        {
+            Name = name;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="XmlAttribute"/> class.
+        /// </summary>
+        /// <param name="isCData">if set to <c>true</c> [is c data].</param>
+        public XmlAttribute(bool isCData)
+        {
+            IsCData = isCData;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="XmlAttribute"/> class.
+        /// </summary>
+        /// <param name="name">The name.</param>
+        /// <param name="isCData">if set to <c>true</c> [is c data].</param>
+        public XmlAttribute(string name, bool isCData)
+        {
+            Name = name;
+            IsCData = isCData;
+        }
+
+        /// <summary>
         /// Gets or sets the name of the mapped XML element.
         /// </summary>
         /// <value>The name.</value>
         public string Name { get; set; }
 
-        // public string Value { get; set; }
+        internal bool IsCData { get; set; }
+
+        /// <summary>
+        /// Gets or sets the namespace.
+        /// </summary>
+        /// <value>
+        /// The namespace.
+        /// </value>
+        public string Namespace { get; set; }
     }
 }

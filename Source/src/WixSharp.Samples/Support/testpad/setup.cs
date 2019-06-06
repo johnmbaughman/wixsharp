@@ -1,12 +1,14 @@
 //css_ref ..\..\WixSharp.dll;
 //css_ref System.Core.dll;
-using Microsoft.Deployment.WindowsInstaller;
 using System;
 using System.Diagnostics;
 using System.Security.Principal;
 using System.Windows.Forms;
+using Microsoft.Deployment.WindowsInstaller;
 using WixSharp;
+using WixSharp.Bootstrapper;
 using WixSharp.CommonTasks;
+using WixSharp.Controls;
 using WixSharp.Forms;
 
 // Truly a throw away project for dev testing
@@ -69,7 +71,7 @@ static class Script
         var project =
             new ManagedProject("ElevatedSetup",
                 new Dir(@"%ProgramFiles%\My Company\My Product",
-                     new File(@"Files\bin\MyApp.exe")));
+                    new File(@"Files\bin\MyApp.exe")));
 
         project.ManagedUI = ManagedUI.Default;
         project.AddAction(new ManagedAction(CustomActions.CheckIfAdmin,
@@ -116,11 +118,23 @@ static class Script
             UI = WUI.WixUI_ProgressOnly,
             Dirs = new[]
             {
-                 new Dir(@"temp", new Dir(@"wixIn", new WixSharp.File(file, new FileShortcut("MyShortcut", inDir))))
-             }
+                new Dir(@"temp", new Dir(@"wixIn", new WixSharp.File(file, new FileShortcut("MyShortcut", inDir))))
+            }
         };
 
         Compiler.BuildMsi(project);
+    }
+
+    static void Issue_609()
+    {
+        // AutoElements.DisableAutoKeyPath = true;
+
+        var project = new Project("MyProduct",
+               new Dir(@"%LocalAppDataFolder%\My Company\My Product", new File("setup.cs")),
+               new RegValue(RegistryHive.CurrentUser, @"Software\My Company\My Product", "LICENSE_KEY", "123456"));
+
+        project.PreserveTempFiles = true;
+        project.BuildMsi();
     }
 
     static void Issue_377()
@@ -133,11 +147,67 @@ static class Script
                         Icon = "someFile.ico",
                         Advertise = true
                     }
-                    )));
+                        )));
 
         project.ControlPanelInfo.ProductIcon = "someProduct.ico";
 
         Compiler.BuildMsi(project);
+    }
+
+    static void Issue_606()
+    {
+        var aisFeature = new Feature("AIS", "Allied Information Services")
+        {
+            Display = FeatureDisplay.expand
+        };
+
+        var webFeature = new Feature("Website", "Manager")
+        {
+            IsEnabled = false,
+            Condition = new FeatureCondition("WEBSITE_FEATURE = 1", level: 1)
+        };
+
+        aisFeature.Add(webFeature);
+
+        var project = new ManagedProject("AIS Manager",
+                        // Base directory
+                        new Dir(@"%ProgramFiles%\Allied\AIS Manager",
+                             // ABS
+                             new Dir(new Id("WEBSITEDIR"), webFeature, "Website",
+                                new File(webFeature, @"setup.cs")
+                            )
+                         )
+                        {
+                            // AttributesDefinition = "Component:Win64=yes"
+                        }
+                    )
+        {
+            GUID = new Guid("E535C39D-5FE8-4C19-802D-8033E7A15B5C"),
+            UI = WUI.WixUI_FeatureTree,
+            PreserveTempFiles = true,
+            Platform = Platform.x64,
+            OutFileName = "AIS Manager x64"
+        };
+
+        // Tasks.RemoveDialogsBetween(project, NativeDialogs.WelcomeDlg, NativeDialogs.CustomizeDlg);
+        project.BuildMsi();
+    }
+
+    static void Issue_551()
+    {
+        var bundle = new Bundle("MyBundle", new PackageGroupRef("NetFx471Web"))
+        {
+            OutFileName = "MyBundle",
+            Version = new Version("1.0")
+        };
+        bundle.Include(WixExtension.Util);
+        bundle.WxsFiles.Add(@"E:\PrivateData\Galos\Projects\Support\MultiWxsBundle\MultiWxsBundle\NetFx471.wxs");
+
+        // uncomment this line for the build to succeed - this should happen automatically
+        // bundle.LightOptions = "NetFx471.wixobj";
+
+        bundle.OutDir = @"E:\PrivateData\Galos\Projects\Support\MultiWxsBundle\MultiWxsBundle";
+        bundle.BuildCmd();
     }
 
     static void Issue_440()
@@ -152,7 +222,7 @@ static class Script
             UI = WUI.WixUI_ProgressOnly,
             Dirs = new[]
             {
-                 new Dir(@"temp", new Dir(@"wixIn", new WixSharp.File(@"E:\Projects\WixSharp\Source\src\WixSharp.Samples\Support\testpad\setup.cs")))
+                new Dir(@"temp", new Dir(@"wixIn", new WixSharp.File(@"E:\Projects\WixSharp\Source\src\WixSharp.Samples\Support\testpad\setup.cs")))
             }
         };
 
@@ -181,7 +251,7 @@ static class Script
             new Dir(@"%ProgramFiles%\My Company\My Product",
                 new File("setup.cs"),
                 new File("setup.cs")
-                ))
+                   ))
         {
             Platform = Platform.x64,
             GUID = new Guid("6fe30b47-2577-43ad-9095-1861ba25889b")
@@ -218,6 +288,9 @@ static class Script
     static public void Main()
     {
         // HiTeach_MSI.Program.Main1(); return;
+        Issue_609(); return;
+        Issue_551(); return;
+        Issue_606(); return;
         Issue_377(); return;
         Issue_440(); return;
         Issue_386(); return;
@@ -238,7 +311,7 @@ static class Script
                     new Dir(serverFeature,
                     @"%CommonAppDataFolder%\TaxPacc\Server",
                         new DirPermission("serviceaccountusername", "serviceaccountdomain", GenericPermission.All)
-                ));
+                           ));
         project.UI = WUI.WixUI_FeatureTree;
         project.PreserveTempFiles = true;
         project.BuildMsiCmd();
@@ -247,8 +320,8 @@ static class Script
     static public void Main1()
     {
         var project = new ManagedProject("IsUninstallTest",
-                            new Dir(@"%ProgramFiles%\UninstallTest",
-                                new File(@"files\setup.cs")));
+                              new Dir(@"%ProgramFiles%\UninstallTest",
+                                  new File(@"files\setup.cs")));
 
         project.AfterInstall += Project_AfterInstall;
         project.PreserveTempFiles = true;
@@ -268,15 +341,15 @@ static class Script
     static public void Main2()
     {
         var project = new ManagedProject("MyProduct",
-                            new Dir(@"C:\My Company\My Product",
-                                new File("setup.cs")));
+                              new Dir(@"C:\My Company\My Product",
+                                  new File("setup.cs")));
 
         project.ManagedUI = new ManagedUI();
         project.ManagedUI.InstallDialogs.Add(Dialogs.Progress)
                                         .Add(Dialogs.Exit);
 
         project.ManagedUI.ModifyDialogs.Add(Dialogs.Progress)
-                                        .Add(Dialogs.Exit);
+                                       .Add(Dialogs.Exit);
 
         project.UIInitialized += (SetupEventArgs e) =>
             {

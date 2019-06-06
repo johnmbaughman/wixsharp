@@ -27,15 +27,15 @@ using System;
 using System.Collections;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Windows.Forms;
 using System.Xml.Linq;
 using System.Xml.XPath;
 using Microsoft.Deployment.WindowsInstaller;
 using WixSharp;
 using WixSharp.Controls;
 using IO = System.IO;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
 
 namespace WixSharp.CommonTasks
 {
@@ -220,13 +220,14 @@ namespace WixSharp.CommonTasks
 
             var tool = new ExternalTool
             {
-                WellKnownLocations = wellKnownLocations ?? @"C:\Program Files\Microsoft SDKs\Windows\v6.0A\bin;" +
-                                                           @"C:\Program Files (x86)\Microsoft SDKs\Windows\v7.1A\Bin;" +
-                                                           @"C:\Program Files (x86)\Microsoft SDKs\ClickOnce\SignTool;" +
-                                                           @"C:\Program Files (x86)\Windows Kits\8.0\bin\x86;" +
-                                                           @"C:\Program Files (x86)\Windows Kits\8.1\bin\x86;" +
-                                                           @"C:\Program Files (x86)\Windows Kits\10\bin\x86;" +
-                                                           @"C:\Program Files (x86)\Windows Kits\10\bin\10.0.15063.0\x86",
+                WellKnownLocations = wellKnownLocations ??
+                                     @"C:\Program Files (x86)\Windows Kits\10\bin\10.0.15063.0\x86;" +
+                                     @"C:\Program Files (x86)\Windows Kits\10\bin\x86;" +
+                                     @"C:\Program Files (x86)\Windows Kits\8.1\bin\x86;" +
+                                     @"C:\Program Files (x86)\Windows Kits\8.0\bin\x86;" +
+                                     @"C:\Program Files (x86)\Microsoft SDKs\ClickOnce\SignTool;" +
+                                     @"C:\Program Files (x86)\Microsoft SDKs\Windows\v7.1A\Bin;" +
+                                     @"C:\Program Files\Microsoft SDKs\Windows\v6.0A\bin",
                 ExePath = "signtool.exe",
                 Arguments = sha1
             };
@@ -1224,7 +1225,7 @@ namespace WixSharp.CommonTasks
 
             //disconnect prev and next dialogs
             project.CustomUI.UISequence.RemoveAll(x => (x.Dialog == prevDialog && x.Control == Buttons.Next) ||
-                                                 (x.Dialog == nextDialog && x.Control == Buttons.Back));
+                                                  (x.Dialog == nextDialog && x.Control == Buttons.Back));
 
             //create new dialogs connection with showAction in between
             project.CustomUI.On(prevDialog, Buttons.Next, new ExecuteCustomAction(showClrDialog))
@@ -1278,6 +1279,53 @@ namespace WixSharp.CommonTasks
                 project.AddProperty(new PropertyRef(prop));
 
             project.Include(WixExtension.NetFx);
+
+            return project;
+        }
+
+        /// <summary>
+        /// Adds the XML fragment to the element specified by <c>placementPath</c>.
+        /// <para>Note <c>placementPath</c> can only contain forward slashes.</para>
+        /// <example>
+        /// The following is an example of adding `Log` element to the `Wix/Bundle` element of the
+        /// bootstrapper project.
+        /// <code>
+        /// bootstrapper.AddXml("Wix/Bundle", "&lt;Log PathVariable=\"LogFileLocation\"/&gt;");
+        /// </code>
+        /// </example>
+        /// </summary>
+        /// <param name="project">The project.</param>
+        /// <param name="placementPath">The placement path.</param>
+        /// <param name="xml">The XML.</param>
+        /// <returns></returns>
+        static public WixProject AddXml(this WixProject project, string placementPath, string xml)
+        {
+            project.WixSourceGenerated += doc => doc.Select(placementPath)
+                                                    .Add(XElement.Parse(xml));
+
+            return project;
+        }
+
+        /// <summary>
+        /// Adds the XML fragment to the element specified by <c>placementPath</c> and the element name with the
+        /// attribute definition.
+        /// <para>Note <c>placementPath</c> can only contain forward slashes.</para>
+        /// <example>The following is an example of adding `Log` element to the `Wix/Bundle` element of the
+        /// bootstrapper project.
+        /// <code>
+        /// bootstrapper.AddXmlElement("Wix/Bundle", "Log", "PathVariable=LogFileLocation");
+        /// </code>
+        /// </example>
+        /// </summary>
+        /// <param name="project">The project.</param>
+        /// <param name="placementPath">The placement path.</param>
+        /// <param name="elementName">Name of the element.</param>
+        /// <param name="attributesDefinition">The attributes definition.</param>
+        /// <returns></returns>
+        static public WixProject AddXmlElement(this WixProject project, string placementPath, string elementName, string attributesDefinition)
+        {
+            project.WixSourceGenerated += doc => doc.Select(placementPath)
+                                                    .AddElement(elementName, attributesDefinition);
 
             return project;
         }
@@ -1619,7 +1667,8 @@ namespace WixSharp.CommonTasks
         /// <summary>
         /// Gets or sets the well known locations for probing the exe file.
         /// <para>
-        /// By default probing is conducted in the locations defined in the system environment variable <c>PATH</c>. By settin <c>WellKnownLocations</c>
+        /// By default probing is conducted in the locations defined in the system environment variable <c>PATH</c>.
+        /// By setting <c>WellKnownLocations</c>
         /// you can add some extra probing locations. The directories must be separated by the ';' character.
         /// </para>
         /// </summary>
